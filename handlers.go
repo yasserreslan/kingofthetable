@@ -57,7 +57,6 @@ func postStartNewGame(w http.ResponseWriter, r *http.Request) {
 		Red:     req.Red,
 		Blue:    req.Blue,
 		Waiting: NewRingQueue(max(8, len(req.Waiting))),
-		Score:   Score{Red: 0, Blue: 0},
 		Started: true,
 		History: nil,
 	}
@@ -157,7 +156,6 @@ func postGoal(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusConflict, err.Error())
 			return
 		}
-		gs.Score.Red++
 	} else {
 		// Blue scores, Red loses
 		if !gs.Started {
@@ -178,7 +176,6 @@ func postGoal(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusConflict, err.Error())
 			return
 		}
-		gs.Score.Blue++
 	}
 	gamesMu.Unlock()
 
@@ -203,7 +200,7 @@ func getGames(w http.ResponseWriter, r *http.Request) {
 	gamesMu.RLock()
 	summaries := make([]gameSummary, 0, len(games))
 	for id, gs := range games {
-		summaries = append(summaries, gameSummary{ID: id, Started: gs.Started, Score: gs.Score})
+		summaries = append(summaries, gameSummary{ID: id, Started: gs.Started})
 	}
 	gamesMu.RUnlock()
 	writeJSON(w, http.StatusOK, summaries)
@@ -239,9 +236,70 @@ func toGameResponse(gs *GameState, rotation *rotationSummary) gameResponse {
 		Red:      gs.Red,
 		Blue:     gs.Blue,
 		Waiting:  gs.Waiting.Snapshot(),
-		Score:    gs.Score,
 		Rotation: rotation,
 		Started:  gs.Started,
 	}
 	return resp
+}
+
+// Remove a player from waiting queue or active slots.
+func postRemovePlayer(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	gameID := vars["gameId"]
+	var req queueRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	req.PlayerID = strings.TrimSpace(req.PlayerID)
+	if req.PlayerID == "" {
+		writeError(w, http.StatusBadRequest, "player_id is required")
+		return
+	}
+
+	gamesMu.Lock()
+	gs, ok := games[gameID]
+	if !ok {
+		gamesMu.Unlock()
+		writeError(w, http.StatusNotFound, "game not found")
+		return
+	}
+	// Snapshot before mutation for undo
+	gs.History = append(gs.History, snapshotGame(gs))
+
+	// Remove from waiting if present
+	removed := gs.Waiting.RemoveValue(req.PlayerID)
+	// Remove from active slots if matched
+	if !removed {
+		if gs.Red.Forward == req.PlayerID {
+			gs.Red.Forward = ""
+			removed = true
+		}
+	}
+	if !removed {
+		if gs.Red.Goalkeeper == req.PlayerID {
+			gs.Red.Goalkeeper = ""
+			removed = true
+		}
+	}
+	if !removed {
+		if gs.Blue.Forward == req.PlayerID {
+			gs.Blue.Forward = ""
+			removed = true
+		}
+	}
+	if !removed {
+		if gs.Blue.Goalkeeper == req.PlayerID {
+			gs.Blue.Goalkeeper = ""
+			removed = true
+		}
+	}
+
+	gamesMu.Unlock()
+
+	if !removed {
+		writeError(w, http.StatusNotFound, "player not found in game")
+		return
+	}
+	writeJSON(w, http.StatusOK, toGameResponse(gs, nil))
 }

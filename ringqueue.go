@@ -59,3 +59,23 @@ func (q *RingQueue) Snapshot() []string {
 	}
 	return out
 }
+
+// RemoveValue removes the first occurrence of v from the queue while
+// preserving the order of remaining elements. Returns true if removed.
+func (q *RingQueue) RemoveValue(v string) bool {
+	if q.size == 0 {
+		return false
+	}
+	removed := false
+	n := q.size
+	// Rebuild in place by dequeuing each and re-enqueueing if not match
+	for i := 0; i < n; i++ {
+		cur, _ := q.Dequeue()
+		if !removed && cur == v {
+			removed = true
+			continue
+		}
+		q.Enqueue(cur)
+	}
+	return removed
+}

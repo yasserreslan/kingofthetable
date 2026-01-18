@@ -1,0 +1,325 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Babyfoot – King of the Table</title>
+  <style>
+    :root {
+      --green:#197a3a; --line:#bfe5c0; --red:#e63946; --blue:#2a6fdb; --orange:#ff8c00; --fg:#111; --bg:#f7f7f7;
+      --wood:#8b5a2b; --shadow: rgba(0,0,0,.15);
+    }
+    html, body { height:100%; margin:0; background:var(--bg); font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; color:var(--fg); }
+    .wrap { max-width: 1000px; margin: 20px auto; padding: 0 16px; }
+    h1 { margin: 8px 0 12px; }
+    .controls { display:flex; gap:8px; flex-wrap: wrap; align-items: center; margin-bottom:10px; }
+    .controls input[type=text] { padding:6px 8px; border:1px solid #ccc; border-radius:6px; }
+    button { padding:8px 12px; border-radius:8px; border:1px solid #ccc; background:#fff; cursor:pointer; }
+    button.primary { background:#111; color:#fff; border-color:#111; }
+    button:disabled { opacity:.6; cursor:not-allowed; }
+    .row { display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
+
+    /* Table */
+    .table { position:relative; height: 420px; background:linear-gradient(180deg,#207d41,#136633); border-radius: 18px; border:16px solid var(--wood); box-shadow:0 10px 30px var(--shadow) inset, 0 6px 20px var(--shadow); overflow:hidden; }
+    .field { position:absolute; inset:12px; background: var(--green); border-radius: 8px; box-shadow: inset 0 0 0 3px var(--line); }
+    .field .midline { position:absolute; left:50%; top:0; bottom:0; width:3px; background: var(--line); transform: translateX(-50%); opacity:.8; }
+    .goal { position:absolute; width: 70px; height: 150px; border:3px solid var(--line); top:50%; transform:translateY(-50%); }
+    .goal.left { left:12px; border-left:none; border-radius:8px 0 0 8px; }
+    .goal.right { right:12px; border-right:none; border-radius:0 8px 8px 0; }
+
+    /* Players */
+    .player { position:absolute; width:30px; height:30px; border-radius:50%; box-shadow:0 2px 6px var(--shadow), inset 0 0 0 3px rgba(255,255,255,.6); display:flex; align-items:center; justify-content:center; color:#fff; font-weight:700; font-size:12px; transition: transform .6s ease, left .6s ease, top .6s ease; }
+    .player.red { background:var(--red); }
+    .player.blue { background:var(--blue); }
+    .label { position:absolute; top:-20px; left:50%; transform:translateX(-50%); font-size:11px; color:#fff; text-shadow:0 1px 2px rgba(0,0,0,.35); white-space:nowrap; }
+    .remove-under { position:absolute; top: 26px; left:50%; transform:translateX(-50%); background:#fff; border:1px solid #ccc; border-radius:6px; padding:2px 6px; font-size:11px; color:#b00020; box-shadow:0 1px 3px var(--shadow); cursor:pointer; }
+
+    /* HUD and queue */
+    .hud { display:flex; justify-content:space-between; align-items:center; padding:10px 6px; }
+    .nextup { font-size: 18px; font-weight:700; }
+    .nextup span { color: var(--orange); }
+    .queue { display:flex; gap:8px; flex-wrap:wrap; align-items:center; padding:8px 0 0; }
+    .chip { display:inline-flex; align-items:center; gap:6px; padding:6px 8px; background:#fff; border:1px solid #ccc; border-radius:20px; box-shadow:0 1px 3px var(--shadow); font-size:12px; }
+    .chip::before { content:""; width:10px; height:10px; border-radius:50%; background:#888; box-shadow: inset 0 0 0 2px #fff; }
+    .chip.red::before { background: var(--red); }
+    .chip.blue::before { background: var(--blue); }
+    .chip.next { border-color: var(--orange); box-shadow:0 1px 3px var(--shadow), inset 0 0 0 1px var(--orange); }
+    .chip.next::before { background: var(--orange); }
+
+    .error { color:#b00020; font-size:12px; }
+    .panel { background:#fff; border:1px solid #ddd; border-radius:10px; padding:10px; box-shadow:0 3px 12px var(--shadow); }
+    .btn-red { background:var(--red); color:#fff; border-color:var(--red); font-size:18px; padding:12px 18px; }
+    .btn-blue { background:var(--blue); color:#fff; border-color:var(--blue); font-size:18px; padding:12px 18px; }
+    .chip .remove { margin-left:6px; background:transparent; border:none; color:#666; cursor:pointer; font-size:12px; }
+    .remove-link { color:#b00020; cursor:pointer; font-size:12px; margin-left:6px; }
+    /* Waiting chips editor */
+    .chip-input { display:flex; gap:8px; flex-wrap:wrap; align-items:center; padding:6px; border:1px solid #ccc; border-radius:8px; background:#fafafa; min-height:38px; }
+    .chip-input input { border:none; outline:none; padding:6px 8px; min-width:140px; background:transparent; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Babyfoot</h1>
+
+    <div class="panel" style="margin-bottom:12px">
+      <div class="controls">
+        <select id="gameSelect"></select>
+        <button id="refreshBtn">Refresh</button>
+        <span style="flex:1"></span>
+        <input id="redF" type="text" placeholder="Red forward" value="p1" />
+        <input id="redG" type="text" placeholder="Red goalkeeper" value="p2" />
+        <input id="blueF" type="text" placeholder="Blue forward" value="p3" />
+        <input id="blueG" type="text" placeholder="Blue goalkeeper" value="p4" />
+        <div style="display:flex; gap:6px; align-items:center">
+          <span style="font-size:12px; color:#555">Waiting:</span>
+          <div id="waitingChips" class="chip-input"></div>
+        </div>
+        <button class="primary" id="startBtn">Start New Game</button>
+      </div>
+      <div class="row">
+        <div id="err" class="error"></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="hud">
+        <div class="nextup">Next up: <span id="nextUp">—</span></div>
+        <div class="row">
+          <button id="redScores" class="btn-red">Red scores</button>
+          <button id="blueScores" class="btn-blue">Blue scores</button>
+          <button id="undoBtn">Undo</button>
+          <input id="queueInput" type="text" placeholder="player_id (e.g., p9)" />
+          <button id="queueBtn">Add to queue</button>
+        </div>
+      </div>
+      <div class="table" id="table">
+        <div class="field">
+          <div class="midline"></div>
+          <div class="goal left"></div>
+          <div class="goal right"></div>
+          <!-- Players rendered dynamically -->
+        </div>
+      </div>
+      <div class="row" style="margin-top:8px; align-items:flex-start">
+        <div style="min-width:120px; font-weight:600">Waiting queue:</div>
+        <div class="queue" id="queue"></div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const api = {
+      list: () => fetch(`/games`).then(r => r.json()),
+      start: (body) => fetch(`/games/start`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) }).then(r => r.json()),
+      get: (id) => fetch(`/games/${id}`).then(r => r.json()),
+      queue: (id, player_id) => fetch(`/games/${id}/queue`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ player_id }) }).then(r => r.json()),
+      goal: (id, team) => fetch(`/games/${id}/goal`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ team }) }).then(async r => { if(!r.ok){throw new Error(JSON.stringify(await r.json()))} return r.json() }),
+      undo: (id) => fetch(`/games/${id}/undo`, { method:'POST' }).then(r => r.json()),
+      remove: (id, player_id) => fetch(`/games/${id}/remove`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ player_id }) }).then(async r => { if(!r.ok){throw new Error(JSON.stringify(await r.json()))} return r.json() }),
+    };
+
+    const state = { gameId: null, game: null };
+    let waitingDraft = ['p5','p6','p7'];
+
+    // Coordinates for players
+    const pos = {
+      red:  { gk: {x: 110, y: 210}, fw: {x: 320, y: 210} },
+      blue: { gk: {x: 690, y: 210}, fw: {x: 480, y: 210} }
+    };
+    const queueZone = { x: 400, y: 380 }; // bottom middle
+
+    function setError(msg) { $("err").textContent = msg || ''; }
+
+    function option(value, text, selected=false){ const o=document.createElement('option'); o.value=value; o.textContent=text; if(selected) o.selected=true; return o; }
+
+    function renderWaitingEditor(){
+      const container = $("waitingChips");
+      container.innerHTML = '';
+      waitingDraft.forEach(id => {
+        const chip = document.createElement('span');
+        chip.className='chip'; chip.textContent = id;
+        const rem = document.createElement('button'); rem.className='remove'; rem.textContent='✕'; rem.title='Remove';
+        rem.onclick = ()=>{ waitingDraft = waitingDraft.filter(v => v !== id); renderWaitingEditor(); };
+        chip.appendChild(rem);
+        container.appendChild(chip);
+      });
+      const input = document.createElement('input');
+      input.id = 'waitingAdd'; input.placeholder = 'Add player_id and press Enter';
+      input.onkeydown = (e)=>{
+        if(e.key === 'Enter'){
+          const v = input.value.trim();
+          if(v && !waitingDraft.includes(v)) { waitingDraft.push(v); input.value=''; renderWaitingEditor(); }
+        }
+      };
+      container.appendChild(input);
+    }
+
+    async function refreshGames(){
+      const list = await api.list();
+      const sel = $("gameSelect");
+      sel.innerHTML = '';
+      sel.appendChild(option('', 'Select game…'));
+      list.forEach(g => sel.appendChild(option(g.id, `${g.id}${g.started?'':' (not started)'}`, state.gameId===g.id)));
+      if(state.gameId){
+        const exists = list.find(g => g.id===state.gameId);
+        if(!exists){ state.gameId = null; state.game = null; renderAll(); }
+      }
+    }
+
+    async function selectGame(id){
+      if(!id){ state.gameId=null; state.game=null; renderAll(); return; }
+      state.gameId = id;
+      state.game = await api.get(id);
+      renderAll(true);
+    }
+
+    function playerEl(team, role, id){
+      const el = document.createElement('div');
+      el.className = `player ${team}`;
+      el.id = `player-${team}-${role}`;
+      el.dataset.playerId = id;
+      const label = document.createElement('div');
+      label.className = 'label';
+      label.textContent = id;
+      el.appendChild(label);
+      // place at role position
+      const p = pos[team][role];
+      el.style.left = p.x+'px';
+      el.style.top = p.y+'px';
+      el.style.transform = 'translate(-50%,-50%)';
+      el.textContent = '';
+      el.appendChild(label);
+      return el;
+    }
+
+    function renderPlayers(){
+      const field = document.querySelector('.field');
+      // clear old players
+      field.querySelectorAll('.player').forEach(n => n.remove());
+      if(!state.game) return;
+      const rG = playerEl('red','gk', state.game.red.goalkeeper);
+      const rF = playerEl('red','fw', state.game.red.forward);
+      const bG = playerEl('blue','gk', state.game.blue.goalkeeper);
+      const bF = playerEl('blue','fw', state.game.blue.forward);
+      // Add remove buttons below active players
+      ;[ ['red','gk',rG], ['red','fw',rF], ['blue','gk',bG], ['blue','fw',bF] ].forEach(([team,role,el])=>{
+        const id = el.dataset.playerId;
+        if(!id) return; // empty slot
+        const btn = document.createElement('button');
+        btn.className='remove-under'; btn.textContent='remove';
+        btn.onclick = async ()=>{ if(!state.gameId) return; try{ setError(''); state.game = await api.remove(state.gameId, id); renderAll(); }catch(e){ setError('Remove failed'); } };
+        el.appendChild(btn);
+      });
+      [rG,rF,bG,bF].forEach(n=> field.appendChild(n));
+    }
+
+    function renderNextUp(){
+      const nu = $("nextUp");
+      if(!state.game || !state.game.waiting || state.game.waiting.length===0){ nu.textContent = '—'; return; }
+      nu.textContent = state.game.waiting[0];
+    }
+
+    function renderQueue(){
+      const q = $("queue"); q.innerHTML='';
+      if(!state.game) return;
+      state.game.waiting.forEach((id,i)=>{
+        const chip = document.createElement('span');
+        chip.className='chip' + (i===0 ? ' next' : '');
+        chip.textContent = id;
+        const rem = document.createElement('button');
+        rem.className='remove'; rem.textContent='✕'; rem.title='Remove from queue';
+        rem.onclick = async ()=>{ if(!state.gameId) return; try { setError(''); state.game = await api.remove(state.gameId, id); renderAll(); } catch(e){ setError('Remove failed'); } };
+        chip.appendChild(rem);
+        q.appendChild(chip);
+      });
+    }
+
+    function renderAll(first=false){
+      renderPlayers();
+      renderNextUp();
+      renderQueue();
+      const sel = $("gameSelect");
+      if(first && state.gameId){ sel.value = state.gameId; }
+    }
+
+    // Simple animation for rotation
+    function animateRotation(loser, summary){
+      // elements for loser team
+      const gk = document.getElementById(`player-${loser}-gk`);
+      const fw = document.getElementById(`player-${loser}-fw`);
+      if(!gk || !fw) return;
+      // Move GK to queue zone, FW to GK slot, spawn new FW from queue zone
+      const gkPos = pos[loser].gk;
+      const fwPos = pos[loser].fw;
+
+      // 1) GK to queue
+      gk.style.left = queueZone.x+'px';
+      gk.style.top = queueZone.y+'px';
+      // 2) FW to GK spot
+      fw.style.left = gkPos.x+'px';
+      fw.style.top = gkPos.y+'px';
+
+      // 3) New FW token spawns from queue and flies to FW position
+      const field = document.querySelector('.field');
+      const nf = playerEl(loser,'fw', summary.new_forward || '');
+      nf.style.left = queueZone.x+'px';
+      nf.style.top = queueZone.y+'px';
+      field.appendChild(nf);
+      requestAnimationFrame(()=>{
+        nf.style.left = fwPos.x+'px';
+        nf.style.top = fwPos.y+'px';
+      });
+
+      // After animation completes, re-render to snap to authoritative state
+      setTimeout(()=>{ renderAll(); }, 650);
+    }
+
+    // Wire up controls
+    $("refreshBtn").onclick = refreshGames;
+    $("gameSelect").onchange = (e)=> selectGame(e.target.value);
+    $("startBtn").onclick = async ()=>{
+      try {
+        setError('');
+        const body = { red:{forward: $("redF").value.trim(), goalkeeper: $("redG").value.trim()}, blue:{forward: $("blueF").value.trim(), goalkeeper: $("blueG").value.trim()}, waiting: waitingDraft.slice() };
+        const res = await api.start(body);
+        state.gameId = res.id; state.game = res.state;
+        await refreshGames();
+        renderAll(true);
+      } catch(err){ setError('Failed to start game'); }
+    };
+    $("queueBtn").onclick = async ()=>{
+      if(!state.gameId){ setError('Select a game first'); return; }
+      const id = $("queueInput").value.trim() || `p${Math.floor(Math.random()*1000)}`;
+      try { setError(''); state.game = await api.queue(state.gameId, id); renderAll(); } catch(err){ setError('Queue failed'); }
+    };
+    $("undoBtn").onclick = async ()=>{
+      if(!state.gameId){ setError('Select a game first'); return; }
+      try { setError(''); state.game = await api.undo(state.gameId); renderAll(); } catch(err){ setError('Undo failed'); }
+    };
+    $("redScores").onclick = async ()=>{ await score('red'); };
+    $("blueScores").onclick = async ()=>{ await score('blue'); };
+
+    async function score(team){
+      if(!state.gameId){ setError('Select a game first'); return; }
+      try{
+        setError('');
+        const loser = team === 'red' ? 'blue' : 'red';
+        const res = await api.goal(state.gameId, team);
+        // Update state and animate rotation
+        state.game = res;
+        renderNextUp();
+        if(res.rotation){ animateRotation(loser, res.rotation); }
+        else { renderAll(); }
+      } catch(e){
+        try { const msg = JSON.parse(e.message).error; setError(msg || 'Goal failed'); }
+        catch { setError('Goal failed'); }
+      }
+    }
+
+    // Initial load
+    renderWaitingEditor();
+    refreshGames();
+  </script>
+</body>
+</html>

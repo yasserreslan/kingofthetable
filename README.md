@@ -26,11 +26,12 @@ Small HTTP backend for a foosball (babyfoot) table with in‑memory game state, 
 
 ## API Summary
 - POST `/games/start` — create a new game; server returns a generated `id`
-- GET `/games` — list all games (id, started, score)
+- GET `/games` — list all games (id, started)
 - GET `/games/{gameId}` — get full game state
 - POST `/games/{gameId}/queue` — add a waiting player
-- POST `/games/{gameId}/goal` — record a goal and rotate
+- POST `/games/{gameId}/goal` — record a goal and rotate (no scoring)
 - POST `/games/{gameId}/undo` — undo the last mutating action
+- POST `/games/{gameId}/remove` — remove a player by `player_id` from queue or active slots
 - GET `/healthz` — health check
 
 ### JSON Conventions

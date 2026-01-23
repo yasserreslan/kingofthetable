@@ -55,6 +55,14 @@
     /* Waiting chips editor */
     .chip-input { display:flex; gap:8px; flex-wrap:wrap; align-items:center; padding:6px; border:1px solid #ccc; border-radius:8px; background:#fafafa; min-height:38px; }
     .chip-input input { border:none; outline:none; padding:6px 8px; min-width:140px; background:transparent; }
+
+    /* Player picker */
+    .picker-wrap { position: relative; display:inline-block; }
+    .picker-list { position:absolute; z-index: 20; left:0; right:0; top: calc(100% + 4px); background:#fff; border:1px solid #ccc; border-radius:8px; box-shadow:0 4px 14px var(--shadow); max-height: 260px; overflow:auto; }
+    .picker-item { padding:8px 10px; cursor:pointer; display:flex; justify-content:space-between; gap:8px; }
+    .picker-item:hover { background:#f5f5f5; }
+    .picker-name { font-weight:600; }
+    .picker-meta { color:#555; font-size:12px; }
   </style>
 </head>
 <body>
@@ -65,11 +73,12 @@
       <div class="controls">
         <select id="gameSelect"></select>
         <button id="refreshBtn">Refresh</button>
+        <a class="btn" href="/leaderboard"><button>Leaderboard</button></a>
         <span style="flex:1"></span>
-        <input id="redF" type="text" placeholder="Red forward" value="p1" />
-        <input id="redG" type="text" placeholder="Red goalkeeper" value="p2" />
-        <input id="blueF" type="text" placeholder="Blue forward" value="p3" />
-        <input id="blueG" type="text" placeholder="Blue goalkeeper" value="p4" />
+        <span class="picker-wrap"><input id="redF" type="text" placeholder="Red forward" value="p1" /></span>
+        <span class="picker-wrap"><input id="redG" type="text" placeholder="Red goalkeeper" value="p2" /></span>
+        <span class="picker-wrap"><input id="blueF" type="text" placeholder="Blue forward" value="p3" /></span>
+        <span class="picker-wrap"><input id="blueG" type="text" placeholder="Blue goalkeeper" value="p4" /></span>
         <div style="display:flex; gap:6px; align-items:center">
           <span style="font-size:12px; color:#555">Waiting:</span>
           <div id="waitingChips" class="chip-input"></div>
@@ -88,7 +97,7 @@
           <button id="redScores" class="btn-red">Red scores</button>
           <button id="blueScores" class="btn-blue">Blue scores</button>
           <button id="undoBtn">Undo</button>
-          <input id="queueInput" type="text" placeholder="player_id (e.g., p9)" />
+          <span class="picker-wrap"><input id="queueInput" type="text" placeholder="Queue player (search or type)" /></span>
           <button id="queueBtn">Add to queue</button>
         </div>
       </div>
@@ -117,6 +126,20 @@
       goal: (id, team) => fetch(`/games/${id}/goal`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ team }) }).then(async r => { if(!r.ok){throw new Error(JSON.stringify(await r.json()))} return r.json() }),
       undo: (id) => fetch(`/games/${id}/undo`, { method:'POST' }).then(r => r.json()),
       remove: (id, player_id) => fetch(`/games/${id}/remove`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ player_id }) }).then(async r => { if(!r.ok){throw new Error(JSON.stringify(await r.json()))} return r.json() }),
+      playersSearch: async (query, limit=10) => {
+        try {
+          const r = await fetch(`/players?query=${encodeURIComponent(query||'')}&limit=${limit}`);
+          if(!r.ok) return [];
+          return await r.json();
+        } catch { return []; }
+      },
+      playersCreate: async (name) => {
+        try {
+          const r = await fetch(`/players`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ name }) });
+          if(!r.ok) return null;
+          return await r.json();
+        } catch { return null; }
+      }
     };
 
     const state = { gameId: null, game: null };
@@ -133,6 +156,47 @@
 
     function option(value, text, selected=false){ const o=document.createElement('option'); o.value=value; o.textContent=text; if(selected) o.selected=true; return o; }
 
+    // Debounce helper
+    function debounce(fn, ms){ let t; return function(...args){ clearTimeout(t); t=setTimeout(()=>fn.apply(this,args), ms); }; }
+
+    // Player autocomplete attach
+    function attachPlayerAutocomplete(input, { onPick }={}){
+      const wrap = input.closest('.picker-wrap') || input.parentElement;
+      let listEl = null;
+      const closeList = ()=>{ if(listEl){ listEl.remove(); listEl=null; } };
+      const render = debounce(async ()=>{
+        const q = input.value.trim();
+        if(!q){ closeList(); return; }
+        const res = await api.playersSearch(q, 10);
+        if(!res || res.length===0){ closeList(); return; }
+        if(!listEl){ listEl = document.createElement('div'); listEl.className='picker-list'; wrap.appendChild(listEl); }
+        listEl.innerHTML='';
+        res.forEach(p=>{
+          const item = document.createElement('div');
+          item.className='picker-item';
+          const left = document.createElement('div'); left.className='picker-name'; left.textContent = p.name;
+          const right = document.createElement('div'); right.className='picker-meta'; right.textContent = `wins ${p.wins||0} · survives ${p.survives||0}`;
+          item.appendChild(left); item.appendChild(right);
+          item.onclick = async ()=>{
+            input.value = p.name;
+            closeList();
+            if(onPick){ onPick(p.name); }
+            // opportunistic upsert
+            api.playersCreate(p.name);
+          };
+          listEl.appendChild(item);
+        });
+      }, 200);
+      input.addEventListener('input', render);
+      input.addEventListener('focus', render);
+      input.addEventListener('blur', ()=> setTimeout(closeList, 200));
+      input.addEventListener('keydown', (e)=>{
+        if(e.key==='Enter'){
+          const v = input.value.trim(); if(v){ api.playersCreate(v); }
+        }
+      });
+    }
+
     function renderWaitingEditor(){
       const container = $("waitingChips");
       container.innerHTML = '';
@@ -144,15 +208,18 @@
         chip.appendChild(rem);
         container.appendChild(chip);
       });
+      const wrap = document.createElement('span'); wrap.className='picker-wrap';
       const input = document.createElement('input');
-      input.id = 'waitingAdd'; input.placeholder = 'Add player_id and press Enter';
+      input.id = 'waitingAdd'; input.placeholder = 'Add player (search or type)';
       input.onkeydown = (e)=>{
         if(e.key === 'Enter'){
           const v = input.value.trim();
-          if(v && !waitingDraft.includes(v)) { waitingDraft.push(v); input.value=''; renderWaitingEditor(); }
+          if(v && !waitingDraft.includes(v)) { waitingDraft.push(v); input.value=''; api.playersCreate(v); renderWaitingEditor(); }
         }
       };
-      container.appendChild(input);
+      wrap.appendChild(input);
+      container.appendChild(wrap);
+      attachPlayerAutocomplete(input, { onPick: (name)=>{ if(name && !waitingDraft.includes(name)){ waitingDraft.push(name); renderWaitingEditor(); } } });
     }
 
     async function refreshGames(){
@@ -281,7 +348,14 @@
     $("startBtn").onclick = async ()=>{
       try {
         setError('');
-        const body = { red:{forward: $("redF").value.trim(), goalkeeper: $("redG").value.trim()}, blue:{forward: $("blueF").value.trim(), goalkeeper: $("blueG").value.trim()}, waiting: waitingDraft.slice() };
+        const rf = $("redF").value.trim();
+        const rg = $("redG").value.trim();
+        const bf = $("blueF").value.trim();
+        const bg = $("blueG").value.trim();
+        const body = { red:{forward: rf, goalkeeper: rg}, blue:{forward: bf, goalkeeper: bg}, waiting: waitingDraft.slice() };
+        // Opportunistically upsert all players (active + waiting) so they exist even if not queued
+        const toCreate = Array.from(new Set([rf,rg,bf,bg, ...waitingDraft].filter(Boolean)));
+        await Promise.all(toCreate.map(n => api.playersCreate(n)));
         const res = await api.start(body);
         state.gameId = res.id; state.game = res.state;
         await refreshGames();
@@ -291,7 +365,7 @@
     $("queueBtn").onclick = async ()=>{
       if(!state.gameId){ setError('Select a game first'); return; }
       const id = $("queueInput").value.trim() || `p${Math.floor(Math.random()*1000)}`;
-      try { setError(''); state.game = await api.queue(state.gameId, id); renderAll(); } catch(err){ setError('Queue failed'); }
+      try { setError(''); await api.playersCreate(id); state.game = await api.queue(state.gameId, id); renderAll(); } catch(err){ setError('Queue failed'); }
     };
     $("undoBtn").onclick = async ()=>{
       if(!state.gameId){ setError('Select a game first'); return; }
@@ -320,6 +394,12 @@
     // Initial load
     renderWaitingEditor();
     refreshGames();
+
+    // Attach autocomplete to static inputs
+    ;['redF','redG','blueF','blueG','queueInput'].forEach(id => {
+      const el = $(id); if(!el) return;
+      attachPlayerAutocomplete(el, { onPick: (name)=>{ api.playersCreate(name); } });
+    });
   </script>
 </body>
 </html>

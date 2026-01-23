@@ -68,6 +68,13 @@ func postStartNewGame(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Queue creation of all players (active + waiting)
+	if db != nil {
+		names := []string{gs.Red.Forward, gs.Red.Goalkeeper, gs.Blue.Forward, gs.Blue.Goalkeeper}
+		names = append(names, gs.Waiting.Snapshot()...)
+		db.EnqueueEnsurePlayers(names)
+	}
+
 	gamesMu.Lock()
 	id := newGameIDLocked()
 	games[id] = gs
@@ -107,6 +114,11 @@ func postQueue(w http.ResponseWriter, r *http.Request) {
 	gs.History = append(gs.History, snapshotGame(gs))
 	gs.Waiting.Enqueue(req.PlayerID)
 	gamesMu.Unlock()
+
+	// Enqueue upsert for the queued player
+	if db != nil {
+		db.EnqueueEnsurePlayers([]string{req.PlayerID})
+	}
 
 	writeJSON(w, http.StatusOK, toGameResponse(gs, nil))
 }
@@ -177,7 +189,14 @@ func postGoal(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// Copy minimal state for DB logging, then release lock
+	stateCopy := GameState{Red: gs.Red, Blue: gs.Blue}
 	gamesMu.Unlock()
+
+	// Record goal event and stats via DB queue
+	if db != nil {
+		db.EnqueueRecordGoal(gameID, team, stateCopy, summary)
+	}
 
 	writeJSON(w, http.StatusOK, toGameResponse(gs, &summary))
 }

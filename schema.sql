@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS players (
   last_seen DATETIME NULL,
   wins INT UNSIGNED NOT NULL DEFAULT 0,
   survives INT UNSIGNED NOT NULL DEFAULT 0,
+  full_rotation INT UNSIGNED NOT NULL DEFAULT 0,
   PRIMARY KEY (id),
   UNIQUE KEY ux_players_name (name),
   KEY ix_players_wins (wins),
@@ -37,6 +38,7 @@ CREATE TABLE IF NOT EXISTS goal_events (
   benched_player_id INT UNSIGNED NOT NULL,
   moved_to_goalkeeper_id INT UNSIGNED NOT NULL,
   new_forward_id INT UNSIGNED NOT NULL,
+  full_rotation TINYINT(1) NOT NULL DEFAULT 0,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   KEY ix_goal_events_game (game_id, created_at),
@@ -60,4 +62,3 @@ CREATE TABLE IF NOT EXISTS goal_events (
 -- FROM players p
 -- JOIN goal_events e ON p.id IN (e.red_forward_id, e.red_goalkeeper_id, e.blue_forward_id, e.blue_goalkeeper_id)
 -- GROUP BY p.id, p.name;
-

@@ -148,6 +148,7 @@ func postGoal(w http.ResponseWriter, r *http.Request) {
 
 	var summary rotationSummary
 	var err error
+	var celebration *celebrationResponse
 	if team == "red" {
 		// Red scores, Blue loses
 		if !gs.Started {
@@ -162,6 +163,16 @@ func postGoal(w http.ResponseWriter, r *http.Request) {
 		}
 		// Snapshot before mutation for undo
 		gs.History = append(gs.History, snapshotGame(gs))
+		// Achievement: start/reset streak if winners pair or team changed.
+		if gs.StreakTeam != "red" || gs.StreakForward != gs.Red.Forward || gs.StreakGoalkeeper != gs.Red.Goalkeeper {
+			gs.StreakTeam = "red"
+			gs.StreakForward = gs.Red.Forward
+			gs.StreakGoalkeeper = gs.Red.Goalkeeper
+			// Record opponent composition at streak start (pre-rotation)
+			gs.StreakOppStartF = gs.Blue.Forward
+			gs.StreakOppStartG = gs.Blue.Goalkeeper
+			gs.StreakAwarded = false
+		}
 		summary, err = rotateLoser(gs, &gs.Blue)
 		if err != nil {
 			gamesMu.Unlock()
@@ -182,11 +193,39 @@ func postGoal(w http.ResponseWriter, r *http.Request) {
 		}
 		// Snapshot before mutation for undo
 		gs.History = append(gs.History, snapshotGame(gs))
+		if gs.StreakTeam != "blue" || gs.StreakForward != gs.Blue.Forward || gs.StreakGoalkeeper != gs.Blue.Goalkeeper {
+			gs.StreakTeam = "blue"
+			gs.StreakForward = gs.Blue.Forward
+			gs.StreakGoalkeeper = gs.Blue.Goalkeeper
+			gs.StreakOppStartF = gs.Red.Forward
+			gs.StreakOppStartG = gs.Red.Goalkeeper
+			gs.StreakAwarded = false
+		}
 		summary, err = rotateLoser(gs, &gs.Red)
 		if err != nil {
 			gamesMu.Unlock()
 			writeError(w, http.StatusConflict, err.Error())
 			return
+		}
+	}
+	// Check full rotation: opponent pair returned to the original pair from streak start
+	if gs.StreakOppStartF != "" && gs.StreakOppStartG != "" {
+		// Identify current opponent after rotation
+		var oppF, oppG string
+		if gs.StreakTeam == "red" {
+			oppF, oppG = gs.Blue.Forward, gs.Blue.Goalkeeper
+		} else {
+			oppF, oppG = gs.Red.Forward, gs.Red.Goalkeeper
+		}
+		if samePair(gs.StreakOppStartF, gs.StreakOppStartG, oppF, oppG) {
+			var winners []string
+			if gs.StreakTeam == "red" {
+				winners = []string{gs.Red.Forward, gs.Red.Goalkeeper}
+			} else {
+				winners = []string{gs.Blue.Forward, gs.Blue.Goalkeeper}
+			}
+			celebration = &celebrationResponse{Type: "full_rotation", Team: gs.StreakTeam, Players: winners}
+			// keep same baseline so next cycles can trigger again later
 		}
 	}
 	// Copy minimal state for DB logging, then release lock
@@ -195,10 +234,10 @@ func postGoal(w http.ResponseWriter, r *http.Request) {
 
 	// Record goal event and stats via DB queue
 	if db != nil {
-		db.EnqueueRecordGoal(gameID, team, stateCopy, summary)
+		db.EnqueueRecordGoal(gameID, team, stateCopy, summary, celebration != nil && celebration.Type == "full_rotation")
 	}
 
-	writeJSON(w, http.StatusOK, toGameResponse(gs, &summary))
+	writeJSON(w, http.StatusOK, toGameResponseWithCelebration(gs, &summary, celebration))
 }
 
 func getGame(w http.ResponseWriter, r *http.Request) {
@@ -247,6 +286,11 @@ func postUndo(w http.ResponseWriter, r *http.Request) {
 	applySnapshot(gs, last)
 	gamesMu.Unlock()
 
+	// Persist undo to DB (reverse last event and counters)
+	if db != nil {
+		db.EnqueueUndoLastEvent(gameID)
+	}
+
 	writeJSON(w, http.StatusOK, toGameResponse(gs, nil))
 }
 
@@ -259,6 +303,38 @@ func toGameResponse(gs *GameState, rotation *rotationSummary) gameResponse {
 		Started:  gs.Started,
 	}
 	return resp
+}
+
+func toGameResponseWithCelebration(gs *GameState, rotation *rotationSummary, cel *celebrationResponse) gameResponse {
+	resp := toGameResponse(gs, rotation)
+	if cel != nil {
+		resp.Celebration = cel
+	}
+	return resp
+}
+
+func uniqueStrings(in []string) []string {
+	m := map[string]struct{}{}
+	out := make([]string, 0, len(in))
+	for _, s := range in {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			continue
+		}
+		if _, ok := m[s]; ok {
+			continue
+		}
+		m[s] = struct{}{}
+		out = append(out, s)
+	}
+	return out
+}
+
+func samePair(a1, a2, b1, b2 string) bool {
+	if a1 == "" || a2 == "" || b1 == "" || b2 == "" {
+		return false
+	}
+	return (a1 == b1 && a2 == b2) || (a1 == b2 && a2 == b1)
 }
 
 // Remove a player from waiting queue or active slots.

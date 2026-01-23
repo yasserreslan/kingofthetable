@@ -48,6 +48,7 @@ func main() {
 	// Players catalogue
 	r.HandleFunc("/players", getPlayers).Methods(http.MethodGet)
 	r.HandleFunc("/players", postPlayer).Methods(http.MethodPost)
+	r.HandleFunc("/players/stats", getPlayersStats).Methods(http.MethodGet)
 	// Leaderboard data
 	r.HandleFunc("/leaderboard/data", getLeaderboardData).Methods(http.MethodGet)
 

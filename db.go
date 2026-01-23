@@ -20,10 +20,11 @@ import (
 
 // Player represents a persisted player record.
 type Player struct {
-	ID       int64  `json:"id"`
-	Name     string `json:"name"`
-	Wins     int64  `json:"wins"`
-	Survives int64  `json:"survives"`
+	ID           int64  `json:"id"`
+	Name         string `json:"name"`
+	Wins         int64  `json:"wins"`
+	Survives     int64  `json:"survives"`
+	FullRotation int64  `json:"full_rotation"`
 }
 
 // DB wraps a SQL connection.
@@ -36,7 +37,6 @@ var db *DB // global optional database handle (nil when disabled)
 
 // initDB initializes the DB if MYSQL_DSN is set. Safe to call multiple times.
 func initDB() {
-	//dsn := strings.TrimSpace(os.Getenv("MYSQL_DSN"))
 	dsn := "mysql://kingofthetable_putslipon:402a4db3870197a7856c904513ffd8648d10e131@d8ufga.h.filess.io:3306/kingofthetable_putslipon"
 	if dsn == "" {
 		log.Printf("[db] MYSQL_DSN not set; persistence disabled")
@@ -116,7 +116,7 @@ func (d *DB) EnsurePlayers(ctx context.Context, names []string) (map[string]int6
 	}
 	// Lookup IDs
 	placeholders := strings.TrimRight(strings.Repeat("?,", len(uniq)), ",")
-	sel := fmt.Sprintf("SELECT id, name, wins, survives FROM players WHERE name IN (%s)", placeholders)
+	sel := fmt.Sprintf("SELECT id, name, wins, survives, full_rotation FROM players WHERE name IN (%s)", placeholders)
 	rows, err := d.sql.QueryContext(ctx, sel, anySlice(uniq)...)
 	if err != nil {
 		return nil, err
@@ -126,8 +126,8 @@ func (d *DB) EnsurePlayers(ctx context.Context, names []string) (map[string]int6
 	for rows.Next() {
 		var id int64
 		var name string
-		var wins, survives int64
-		if err := rows.Scan(&id, &name, &wins, &survives); err != nil {
+		var wins, survives, crowns int64
+		if err := rows.Scan(&id, &name, &wins, &survives, &crowns); err != nil {
 			return nil, err
 		}
 		out[name] = id
@@ -146,7 +146,7 @@ func (d *DB) SearchPlayers(ctx context.Context, q string, limit int) ([]Player, 
 	q = strings.TrimSpace(q)
 	like := "%" + q + "%"
 	rows, err := d.sql.QueryContext(ctx,
-		"SELECT id, name, wins, survives FROM players WHERE name LIKE ? ORDER BY wins DESC, survives DESC, name ASC LIMIT ?",
+		"SELECT id, name, wins, survives, full_rotation FROM players WHERE name LIKE ? ORDER BY wins DESC, survives DESC, full_rotation DESC, name ASC LIMIT ?",
 		like, limit,
 	)
 	if err != nil {
@@ -156,7 +156,7 @@ func (d *DB) SearchPlayers(ctx context.Context, q string, limit int) ([]Player, 
 	var res []Player
 	for rows.Next() {
 		var p Player
-		if err := rows.Scan(&p.ID, &p.Name, &p.Wins, &p.Survives); err != nil {
+		if err := rows.Scan(&p.ID, &p.Name, &p.Wins, &p.Survives, &p.FullRotation); err != nil {
 			return nil, err
 		}
 		res = append(res, p)
@@ -164,9 +164,62 @@ func (d *DB) SearchPlayers(ctx context.Context, q string, limit int) ([]Player, 
 	return res, rows.Err()
 }
 
+// IncrementFullRotation increments the full_rotation counter for the given player names.
+func (d *DB) IncrementFullRotation(ctx context.Context, names []string) error {
+	if d == nil || d.sql == nil || len(names) == 0 {
+		return nil
+	}
+	// Ensure players exist first
+	if _, err := d.EnsurePlayers(ctx, names); err != nil {
+		return err
+	}
+	placeholders := strings.TrimRight(strings.Repeat("?,", len(names)), ",")
+	_, err := d.sql.ExecContext(ctx, fmt.Sprintf("UPDATE players SET full_rotation = full_rotation + 1 WHERE name IN (%s)", placeholders), anySlice(names)...)
+	return err
+}
+
+// GetPlayersByNames returns player rows keyed by name for exact matches.
+func (d *DB) GetPlayersByNames(ctx context.Context, names []string) (map[string]Player, error) {
+	if d == nil || d.sql == nil {
+		return map[string]Player{}, nil
+	}
+	uniq := make([]string, 0, len(names))
+	seen := map[string]struct{}{}
+	for _, n := range names {
+		n = strings.TrimSpace(n)
+		if n == "" {
+			continue
+		}
+		if _, ok := seen[n]; ok {
+			continue
+		}
+		seen[n] = struct{}{}
+		uniq = append(uniq, n)
+	}
+	if len(uniq) == 0 {
+		return map[string]Player{}, nil
+	}
+	placeholders := strings.TrimRight(strings.Repeat("?,", len(uniq)), ",")
+	rows, err := d.sql.QueryContext(ctx,
+		fmt.Sprintf("SELECT id, name, wins, survives, full_rotation FROM players WHERE name IN (%s)", placeholders), anySlice(uniq)...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make(map[string]Player, len(uniq))
+	for rows.Next() {
+		var p Player
+		if err := rows.Scan(&p.ID, &p.Name, &p.Wins, &p.Survives, &p.FullRotation); err != nil {
+			return nil, err
+		}
+		out[p.Name] = p
+	}
+	return out, rows.Err()
+}
+
 // RecordGoal stores a goal event and updates per-player counters.
 // It infers pre-rotation assignments from the provided team and rotation summary.
-func (d *DB) RecordGoal(ctx context.Context, gameID string, team string, gs *GameState, rot rotationSummary) error {
+func (d *DB) RecordGoal(ctx context.Context, gameID string, team string, gs *GameState, rot rotationSummary, awardFullRotation bool) error {
 	if d == nil || d.sql == nil {
 		return nil
 	}
@@ -250,9 +303,9 @@ func (d *DB) RecordGoal(ctx context.Context, gameID string, team string, gs *Gam
 
 	// Insert goal event row
 	_, err = tx.ExecContext(ctx,
-		`INSERT INTO goal_events (game_id, scoring_team, red_forward_id, red_goalkeeper_id, blue_forward_id, blue_goalkeeper_id, benched_player_id, moved_to_goalkeeper_id, new_forward_id)
-         VALUES (?,?,?,?,?,?,?,?,?)`,
-		gameID, team, redFid, redGid, blueFid, blueGid, benchedID, movedID, newFID,
+		`INSERT INTO goal_events (game_id, scoring_team, red_forward_id, red_goalkeeper_id, blue_forward_id, blue_goalkeeper_id, benched_player_id, moved_to_goalkeeper_id, new_forward_id, full_rotation)
+         VALUES (?,?,?,?,?,?,?,?,?,?)`,
+		gameID, team, redFid, redGid, blueFid, blueGid, benchedID, movedID, newFID, awardFullRotation,
 	)
 	if err != nil {
 		return err
@@ -292,10 +345,88 @@ func (d *DB) RecordGoal(ctx context.Context, gameID string, team string, gs *Gam
 		}
 	}
 
+	// If a full rotation was awarded, increment winners' full_rotation counters atomically
+	if awardFullRotation {
+		winners := []int64{}
+		if team == "red" {
+			winners = []int64{redFid, redGid}
+		} else {
+			winners = []int64{blueFid, blueGid}
+		}
+		placeholders := strings.TrimRight(strings.Repeat("?,", len(winners)), ",")
+		if _, err := tx.ExecContext(ctx, fmt.Sprintf("UPDATE players SET full_rotation = full_rotation + 1 WHERE id IN (%s)", placeholders), anySliceInt64(winners)...); err != nil {
+			return err
+		}
+	}
+
 	if err := tx.Commit(); err != nil {
 		return err
 	}
 	return nil
+}
+
+// UndoLastEvent removes the latest goal event for the game and reverses its counter effects.
+func (d *DB) UndoLastEvent(ctx context.Context, gameID string) error {
+	if d == nil || d.sql == nil {
+		return nil
+	}
+	tx, err := d.sql.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var (
+		id                       int64
+		team                     string
+		redF, redG, blueF, blueG int64
+		moved                    int64
+		award                    bool
+	)
+	row := tx.QueryRowContext(ctx, `SELECT id, scoring_team, red_forward_id, red_goalkeeper_id, blue_forward_id, blue_goalkeeper_id, moved_to_goalkeeper_id, full_rotation
+                                     FROM goal_events WHERE game_id = ? ORDER BY id DESC LIMIT 1`, gameID)
+	if err := row.Scan(&id, &team, &redF, &redG, &blueF, &blueG, &moved, &award); err != nil {
+		if err == sql.ErrNoRows {
+			return nil
+		}
+		return err
+	}
+	// Figure winners and survivors from stored roles
+	var winners []int64
+	var survivors []int64
+	if team == "red" {
+		winners = []int64{redF, redG}
+		survivors = []int64{redF, redG, moved}
+	} else {
+		winners = []int64{blueF, blueG}
+		survivors = []int64{blueF, blueG, moved}
+	}
+	// Decrement wins
+	if len(winners) > 0 {
+		placeholders := strings.TrimRight(strings.Repeat("?,", len(winners)), ",")
+		if _, err := tx.ExecContext(ctx, fmt.Sprintf("UPDATE players SET wins = GREATEST(wins - 1, 0) WHERE id IN (%s)", placeholders), anySliceInt64(winners)...); err != nil {
+			return err
+		}
+	}
+	// Decrement survives
+	if len(survivors) > 0 {
+		placeholders := strings.TrimRight(strings.Repeat("?,", len(survivors)), ",")
+		if _, err := tx.ExecContext(ctx, fmt.Sprintf("UPDATE players SET survives = GREATEST(survives - 1, 0) WHERE id IN (%s)", placeholders), anySliceInt64(survivors)...); err != nil {
+			return err
+		}
+	}
+	// Decrement full_rotation if awarded
+	if award {
+		placeholders := strings.TrimRight(strings.Repeat("?,", len(winners)), ",")
+		if _, err := tx.ExecContext(ctx, fmt.Sprintf("UPDATE players SET full_rotation = GREATEST(full_rotation - 1, 0) WHERE id IN (%s)", placeholders), anySliceInt64(winners)...); err != nil {
+			return err
+		}
+	}
+	// Delete the event row
+	if _, err := tx.ExecContext(ctx, `DELETE FROM goal_events WHERE id = ?`, id); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func uniqIDs(in []int64) []int64 {
@@ -463,6 +594,8 @@ type dbOpType int
 const (
 	opEnsurePlayers dbOpType = iota + 1
 	opRecordGoal
+	opFullRotation
+	opUndoLast
 )
 
 type dbOp struct {
@@ -474,6 +607,7 @@ type dbOp struct {
 	team   string
 	gs     GameState
 	rot    rotationSummary
+	award  bool
 }
 
 // EnqueueEnsurePlayers schedules an insert-or-ignore for the given names.
@@ -488,11 +622,27 @@ func (d *DB) EnqueueEnsurePlayers(names []string) {
 }
 
 // EnqueueRecordGoal schedules a goal event write with stat updates.
-func (d *DB) EnqueueRecordGoal(gameID, team string, gs GameState, rot rotationSummary) {
+func (d *DB) EnqueueRecordGoal(gameID, team string, gs GameState, rot rotationSummary, award bool) {
 	if d == nil || d.sql == nil {
 		return
 	}
-	d.ops <- dbOp{typ: opRecordGoal, gameID: gameID, team: team, gs: gs, rot: rot}
+	d.ops <- dbOp{typ: opRecordGoal, gameID: gameID, team: team, gs: gs, rot: rot, award: award}
+}
+
+// EnqueueFullRotation increments the achievement for the given winner names.
+func (d *DB) EnqueueFullRotation(names []string) {
+	if d == nil || d.sql == nil {
+		return
+	}
+	d.ops <- dbOp{typ: opFullRotation, names: append([]string(nil), names...)}
+}
+
+// EnqueueUndoLastEvent schedules undo of the latest goal event for the game.
+func (d *DB) EnqueueUndoLastEvent(gameID string) {
+	if d == nil || d.sql == nil {
+		return
+	}
+	d.ops <- dbOp{typ: opUndoLast, gameID: gameID}
 }
 
 func (d *DB) startWorker() {
@@ -509,7 +659,15 @@ func (d *DB) startWorker() {
 					cancel()
 				case opRecordGoal:
 					ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-					err = d.RecordGoal(ctx, op.gameID, op.team, &op.gs, op.rot)
+					err = d.RecordGoal(ctx, op.gameID, op.team, &op.gs, op.rot, op.award)
+					cancel()
+				case opFullRotation:
+					ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+					err = d.IncrementFullRotation(ctx, op.names)
+					cancel()
+				case opUndoLast:
+					ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+					err = d.UndoLastEvent(ctx, op.gameID)
 					cancel()
 				default:
 					err = nil

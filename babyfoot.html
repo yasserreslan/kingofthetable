@@ -32,6 +32,7 @@
     .player.red { background:var(--red); }
     .player.blue { background:var(--blue); }
     .label { position:absolute; top:-20px; left:50%; transform:translateX(-50%); font-size:11px; color:#fff; text-shadow:0 1px 2px rgba(0,0,0,.35); white-space:nowrap; }
+    .badge { position:absolute; right:-6px; top:-6px; background:#fff; color:#111; border-radius:10px; padding:1px 5px; font-size:10px; border:1px solid #ddd; box-shadow:0 1px 2px var(--shadow); }
     .remove-under { position:absolute; top: 26px; left:50%; transform:translateX(-50%); background:#fff; border:1px solid #ccc; border-radius:6px; padding:2px 6px; font-size:11px; color:#b00020; box-shadow:0 1px 3px var(--shadow); cursor:pointer; }
 
     /* HUD and queue */
@@ -74,6 +75,14 @@
     .input-field { display:flex; flex-direction:column; gap:6px; margin-bottom:8px; }
     .input-field label { font-size:12px; color:#555; }
     .actions { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+
+    /* Celebration */
+    .celebration { position:fixed; top:20px; left:50%; transform:translateX(-50%); background:rgba(255,255,255,0.95); border:1px solid #eee; border-radius:14px; padding:10px 14px; box-shadow:0 8px 24px var(--shadow); font-size:16px; display:flex; align-items:center; gap:10px; opacity:0; transition: opacity .4s ease; z-index: 1000; }
+    .celebration.show { opacity:1; }
+    .celebration .emoji { font-size:22px; }
+    /* Pulse effect */
+    @keyframes pulseGlow { 0%{ box-shadow:0 0 0 0 rgba(255,193,7,.7);} 70%{ box-shadow:0 0 0 10px rgba(255,193,7,0);} 100%{ box-shadow:0 0 0 0 rgba(255,193,7,0);} }
+    .pulse { animation: pulseGlow 1.2s ease; }
   </style>
 </head>
 <body>
@@ -281,6 +290,12 @@
       label.className = 'label';
       label.textContent = id;
       el.appendChild(label);
+      const badge = document.createElement('span');
+      badge.className = 'badge';
+      badge.textContent = '';
+      badge.style.display = 'none';
+      badge.dataset.kind = 'crowns';
+      el.appendChild(badge);
       // place at role position
       const p = pos[team][role];
       el.style.left = p.x+'px';
@@ -310,6 +325,35 @@
         el.appendChild(btn);
       });
       [rG,rF,bG,bF].forEach(n=> field.appendChild(n));
+      // After rendering, update badges with live stats
+      updateBadges();
+    }
+
+    async function updateBadges(){
+      const names = [];
+      if(!state.game) return;
+      const add = (s)=>{ if(s && !names.includes(s)) names.push(s); };
+      add(state.game.red.goalkeeper); add(state.game.red.forward);
+      add(state.game.blue.goalkeeper); add(state.game.blue.forward);
+      if(names.length===0) return;
+      try{
+        const q = encodeURIComponent(names.join(','));
+        const res = await fetch(`/players/stats?names=${q}`);
+        if(!res.ok) return;
+        const arr = await res.json();
+        const map = {}; arr.forEach(p=> map[p.name]=p);
+        const setBadge = (team, role, name)=>{
+          const el = document.getElementById(`player-${team}-${role}`);
+          if(!el) return; const b = el.querySelector('.badge'); if(!b) return;
+          const count = (map[name] && map[name].full_rotation) || 0;
+          if(count>0){ b.textContent = `👑 ${count}`; b.style.display='inline-block'; }
+          else { b.style.display='none'; }
+        };
+        setBadge('red','gk', state.game.red.goalkeeper);
+        setBadge('red','fw', state.game.red.forward);
+        setBadge('blue','gk', state.game.blue.goalkeeper);
+        setBadge('blue','fw', state.game.blue.forward);
+      }catch{}
     }
 
     function renderNextUp(){
@@ -416,6 +460,26 @@
         renderNextUp();
         if(res.rotation){ animateRotation(loser, res.rotation); }
         else { renderAll(); }
+        // Celebration
+        if(res.celebration && res.celebration.type === 'full_rotation'){
+          const div = document.createElement('div');
+          div.className = 'celebration';
+          const emoji = document.createElement('span'); emoji.className='emoji'; emoji.textContent='👑';
+          const txt = document.createElement('span');
+          const teamName = res.celebration.team === 'red' ? 'Red' : 'Blue';
+          txt.textContent = `${teamName} full rotation!`;
+          div.appendChild(emoji); div.appendChild(txt);
+          document.body.appendChild(div);
+          requestAnimationFrame(()=> div.classList.add('show'));
+          setTimeout(()=>{ div.classList.remove('show'); setTimeout(()=> div.remove(), 400); }, 2200);
+          try { playPartySound(); } catch {}
+          // Brief pulse on returned opponent pair
+          const opp = res.celebration.team === 'red' ? 'blue' : 'red';
+          ['gk','fw'].forEach(role=>{
+            const p = document.getElementById(`player-${opp}-${role}`);
+            if(p){ p.classList.add('pulse'); setTimeout(()=> p.classList.remove('pulse'), 1200); }
+          });
+        }
       } catch(e){
         try { const msg = JSON.parse(e.message).error; setError(msg || 'Goal failed'); }
         catch { setError('Goal failed'); }

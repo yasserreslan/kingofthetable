@@ -11,6 +11,16 @@ type GameState struct {
 	Waiting *RingQueue
 	Started bool
 	History []GameSnapshot
+	// Streak/achievement tracking (not serialized)
+	StreakTeam          string              `json:"-"`
+	StreakForward       string              `json:"-"`
+	StreakGoalkeeper    string              `json:"-"`
+	StreakQueueBaseline []string            `json:"-"`
+	StreakSeenFromQueue map[string]struct{} `json:"-"`
+	StreakAwarded       bool                `json:"-"`
+	// Opponent composition at streak start (pre-rotation)
+	StreakOppStartF string `json:"-"`
+	StreakOppStartG string `json:"-"`
 }
 
 // Snapshot used for undo support.
@@ -62,12 +72,19 @@ type rotationSummary struct {
 	NewForward        string `json:"new_forward"`
 }
 
+type celebrationResponse struct {
+	Type    string   `json:"type"` // e.g., "full_rotation"
+	Team    string   `json:"team"` // "red" or "blue"
+	Players []string `json:"players"`
+}
+
 type gameResponse struct {
-	Red      TeamState        `json:"red"`
-	Blue     TeamState        `json:"blue"`
-	Waiting  []string         `json:"waiting"`
-	Rotation *rotationSummary `json:"rotation,omitempty"`
-	Started  bool             `json:"started"`
+	Red         TeamState            `json:"red"`
+	Blue        TeamState            `json:"blue"`
+	Waiting     []string             `json:"waiting"`
+	Rotation    *rotationSummary     `json:"rotation,omitempty"`
+	Started     bool                 `json:"started"`
+	Celebration *celebrationResponse `json:"celebration,omitempty"`
 }
 
 type gameSummary struct {

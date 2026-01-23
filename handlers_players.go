@@ -55,6 +55,42 @@ func postPlayer(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, Player{ID: 0, Name: name})
 }
 
+// GET /players/stats?names=a,b,c
+func getPlayersStats(w http.ResponseWriter, r *http.Request) {
+	if db == nil {
+		writeError(w, http.StatusNotImplemented, "database not configured")
+		return
+	}
+	raw := strings.TrimSpace(r.URL.Query().Get("names"))
+	if raw == "" {
+		writeJSON(w, http.StatusOK, []Player{})
+		return
+	}
+	parts := strings.Split(raw, ",")
+	stats, err := db.GetPlayersByNames(r.Context(), parts)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	// Return as array in the order of requested names
+	res := make([]Player, 0, len(parts))
+	seen := map[string]struct{}{}
+	for _, name := range parts {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		seen[name] = struct{}{}
+		if p, ok := stats[name]; ok {
+			res = append(res, p)
+		}
+	}
+	writeJSON(w, http.StatusOK, res)
+}
+
 // GET /leaderboard/data?limit=50
 func getLeaderboardData(w http.ResponseWriter, r *http.Request) {
 	if db == nil {

@@ -63,6 +63,17 @@
     .picker-item:hover { background:#f5f5f5; }
     .picker-name { font-weight:600; }
     .picker-meta { color:#555; font-size:12px; }
+
+    /* Top UI layout */
+    .toolbar { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+    .spacer { flex:1; }
+    a.btn { text-decoration:none; }
+    .setup-grid { display:grid; gap:12px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); align-items:start; }
+    .group { background:#fff; border:1px solid #e6e6e6; border-radius:10px; padding:10px; box-shadow:0 1px 6px var(--shadow); }
+    .group h3 { margin:0 0 8px; font-size:14px; color:#333; letter-spacing:.2px; }
+    .input-field { display:flex; flex-direction:column; gap:6px; margin-bottom:8px; }
+    .input-field label { font-size:12px; color:#555; }
+    .actions { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
   </style>
 </head>
 <body>
@@ -70,23 +81,43 @@
     <h1>Babyfoot</h1>
 
     <div class="panel" style="margin-bottom:12px">
-      <div class="controls">
-        <select id="gameSelect"></select>
+      <div class="toolbar" style="margin-bottom:8px">
+        <select id="gameSelect" title="Select game"></select>
         <button id="refreshBtn">Refresh</button>
         <a class="btn" href="/leaderboard"><button>Leaderboard</button></a>
-        <span style="flex:1"></span>
-        <span class="picker-wrap"><input id="redF" type="text" placeholder="Red forward" value="p1" /></span>
-        <span class="picker-wrap"><input id="redG" type="text" placeholder="Red goalkeeper" value="p2" /></span>
-        <span class="picker-wrap"><input id="blueF" type="text" placeholder="Blue forward" value="p3" /></span>
-        <span class="picker-wrap"><input id="blueG" type="text" placeholder="Blue goalkeeper" value="p4" /></span>
-        <div style="display:flex; gap:6px; align-items:center">
-          <span style="font-size:12px; color:#555">Waiting:</span>
-          <div id="waitingChips" class="chip-input"></div>
-        </div>
-        <button class="primary" id="startBtn">Start New Game</button>
-      </div>
-      <div class="row">
+        <span class="spacer"></span>
         <div id="err" class="error"></div>
+      </div>
+      <div class="setup-grid">
+        <div class="group">
+          <h3>Red Team</h3>
+          <div class="input-field">
+            <label for="redF">Forward</label>
+            <span class="picker-wrap"><input id="redF" type="text" placeholder="e.g., Alice" autocomplete="off" /></span>
+          </div>
+          <div class="input-field">
+            <label for="redG">Goalkeeper</label>
+            <span class="picker-wrap"><input id="redG" type="text" placeholder="e.g., Bob" autocomplete="off" /></span>
+          </div>
+        </div>
+        <div class="group">
+          <h3>Blue Team</h3>
+          <div class="input-field">
+            <label for="blueF">Forward</label>
+            <span class="picker-wrap"><input id="blueF" type="text" placeholder="e.g., Carol" autocomplete="off" /></span>
+          </div>
+          <div class="input-field">
+            <label for="blueG">Goalkeeper</label>
+            <span class="picker-wrap"><input id="blueG" type="text" placeholder="e.g., Dave" autocomplete="off" /></span>
+          </div>
+        </div>
+        <div class="group" style="grid-column: 1 / -1;">
+          <h3>Waiting List</h3>
+          <div id="waitingChips" class="chip-input"></div>
+          <div class="actions" style="margin-top:8px">
+            <button class="primary" id="startBtn">Start New Game</button>
+          </div>
+        </div>
       </div>
     </div>
 
